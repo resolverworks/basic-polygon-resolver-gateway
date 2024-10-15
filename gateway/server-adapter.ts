@@ -2,7 +2,16 @@
 /// @author clowes.eth
 /// @company Unruggable
 import { createServerAdapter } from "@whatwg-node/server";
-import { Contract, AbiCoder, type Provider, solidityPackedKeccak256, keccak256, SigningKey, Interface, toUtf8Bytes } from "ethers";
+import {
+  Contract,
+  AbiCoder,
+  type Provider,
+  solidityPackedKeccak256,
+  keccak256,
+  SigningKey,
+  Interface,
+  toUtf8Bytes,
+} from "ethers";
 
 const ABI_CODER = new AbiCoder();
 const L2_RESOLVER_ABI = [
@@ -12,13 +21,14 @@ const L2_RESOLVER_ABI = [
   "function contenthash(bytes32 node) external view returns (bytes memory)",
 ];
 const I_EXTENDED_RESOLVER_ABI = [
-  "function resolve(bytes name, bytes data) external view returns (bytes)"
+  "function resolve(bytes name, bytes data) external view returns (bytes)",
 ];
 const I_EXTENDED_RESOLVER_INTERFACE = new Interface(I_EXTENDED_RESOLVER_ABI);
 
 // Helper function to extract the first label from a DNS-encoded name
 function getFirstLabelFromDNSEncoded(dnsBytes: string) {
-  const data = typeof dnsBytes === 'string' ? hexStringToUint8Array(dnsBytes) : dnsBytes;
+  const data =
+    typeof dnsBytes === "string" ? hexStringToUint8Array(dnsBytes) : dnsBytes;
   const firstLabelLength = data[0];
   const firstLabelBytes = data.slice(1, 1 + firstLabelLength);
   const firstLabel = new TextDecoder("utf-8").decode(firstLabelBytes);
@@ -28,19 +38,17 @@ function getFirstLabelFromDNSEncoded(dnsBytes: string) {
 // Helper function to convert a hex string to a Uint8Array
 function hexStringToUint8Array(hexString: string) {
   const matches = hexString.match(/.{1,2}/g);
-  const mapped = matches?.map(byte => parseInt(byte, 16));
+  const mapped = matches?.map((byte) => parseInt(byte, 16));
   const byteArray = new Uint8Array(mapped ? mapped : []);
   return byteArray;
 }
 
 // Builder function for creating a configured server adapter
 export default (provider: Provider, registryAddress: string) => {
-  
   return createServerAdapter(async (request: Request) => {
-
     const registryContract = new Contract(
-      registryAddress, 
-      L2_RESOLVER_ABI, 
+      registryAddress,
+      L2_RESOLVER_ABI,
       provider
     );
 
@@ -54,14 +62,13 @@ export default (provider: Provider, registryAddress: string) => {
         status: 204,
         headers: {
           "Access-Control-Allow-Origin": "*",
-          "Access-Control-Allow-Methods": "POST, OPTIONS", 
+          "Access-Control-Allow-Methods": "POST, OPTIONS",
           "Access-Control-Allow-Headers": "Content-Type",
         },
       });
     }
 
     try {
-
       const requestBody = await request.text();
       const requestData = JSON.parse(requestBody);
 
@@ -72,10 +79,16 @@ export default (provider: Provider, registryAddress: string) => {
       }
 
       // Decode the msg.data
-      const [dnsEncodedName, calldata] = I_EXTENDED_RESOLVER_INTERFACE.decodeFunctionData("resolve", messageData);
+      const [dnsEncodedName, calldata] =
+        I_EXTENDED_RESOLVER_INTERFACE.decodeFunctionData(
+          "resolve",
+          messageData
+        );
 
       // Get the first label
-      const firstLabel = getFirstLabelFromDNSEncoded(dnsEncodedName.substring(2));
+      const firstLabel = getFirstLabelFromDNSEncoded(
+        dnsEncodedName.substring(2)
+      );
       const labelhash = keccak256(toUtf8Bytes(firstLabel));
 
       const functionSelector = calldata.slice(0, 10);
@@ -84,16 +97,21 @@ export default (provider: Provider, registryAddress: string) => {
       const fullFunctionName = fn?.format("minimal");
 
       if (!fn) {
-        return errorResponse(`Unsupported function selector ${functionSelector}`);
+        return errorResponse(
+          `Unsupported function selector ${functionSelector}`
+        );
       }
 
       // Decoded the resolution function calldata
-      const decodedFunctionData = registryContract.interface.decodeFunctionData(fn, calldata)!;
+      const decodedFunctionData = registryContract.interface.decodeFunctionData(
+        fn,
+        calldata
+      )!;
 
       console.log("fullFunctionName", fullFunctionName);
       console.log("Namehash", decodedFunctionData[0]);
       console.log("Labelhash", labelhash);
-      
+
       // Replace the namehash with the labelhash as our resolver in 2LD agnostic
       const modifiedFunctionData = [labelhash, ...decodedFunctionData.slice(1)];
 
@@ -109,13 +127,20 @@ export default (provider: Provider, registryAddress: string) => {
       );
 
       // Configurable parameter for how long the response is valid
-      const validityInSeconds = Number(process.env.CCIP_VALID_FOR_IN_SECONDS) ?? 60;
+      const validityInSeconds =
+        Number(process.env.CCIP_VALID_FOR_IN_SECONDS) ?? 60;
       const expires = Math.floor(Date.now() / 1e3) + validityInSeconds;
 
       // Pack our data in a format known to our CCIP callback
       let hash = solidityPackedKeccak256(
         ["bytes", "address", "uint64", "bytes32", "bytes32"],
-        ["0x1900", sender, expires, keccak256(messageData), keccak256(encodedResult)]
+        [
+          "0x1900",
+          sender,
+          expires,
+          keccak256(messageData),
+          keccak256(encodedResult),
+        ]
       );
 
       // Sign the hash and bundle it in a structure known to our CCIP callback
@@ -126,12 +151,12 @@ export default (provider: Provider, registryAddress: string) => {
       );
 
       return successResponse(data);
-      
     } catch (error) {
+      console.error("Error processing request:", error);
       return errorResponse("Failed to process request", 500);
     }
   });
-}
+};
 
 const successResponse = (data: string, status: number = 200) => {
   console.log("Sending success response:", data);
@@ -139,7 +164,7 @@ const successResponse = (data: string, status: number = 200) => {
     status: status,
     headers: {
       "Content-Type": "application/json",
-      "Access-Control-Allow-Origin": "*"
+      "Access-Control-Allow-Origin": "*",
     },
   });
 };
@@ -150,7 +175,7 @@ const errorResponse = (message: string, status: number = 400) => {
     status: status,
     headers: {
       "Content-Type": "application/json",
-      "Access-Control-Allow-Origin": "*"
+      "Access-Control-Allow-Origin": "*",
     },
   });
 };
